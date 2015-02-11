@@ -1,7 +1,7 @@
 # Introduction
   The purpose of this document is describe the requirements and design
 considerations for a horizontally scalable, redundant database system for
-openstack. 
+openstack.
 
   The system should allow sharding the database tables to make it
 scalable, and it should handle the data redundancy and failure scenarios
@@ -9,8 +9,11 @@ transparant to the application and without any administrative effort. This will
 enable jiocloud system to achieve the following.
 
 * Openstack system to scale thousands of nodes and hundreds of thousands of VMs
-* Treat database servers like "cattles" where in case of failures/errors, they
+* Treat database servers like "cattle" where in case of failures/errors, they
    can be rebuilt without any serious problems.
+* Also we may be running something like chaos monkey to kill the servers on
+  specific duration to make sure the node configuration is consistant and doesnt
+  have entropy.
 
 # Problem Statement
 
@@ -18,7 +21,7 @@ Current mysql database solutions for openstack has two major disadvantages.
 
 1. One of the solutions is Galera replicated database servers, in which case,
 the data will be replicated all database servers and all servers are
-read/wriable. The major problem with galera is its synchoronous nature of
+read/writable. The major problem with galera is its synchoronous nature of
 replication cause large number of locks and even dead locks, which cause the
 transactions fail during peak times. There are limitations on horizontal
 scalability as all data replicated to all servers, and adding more servers cause
@@ -70,7 +73,7 @@ Here is the logical diagram of vitess cluster components.
                    +----+----+++                   +--+------------+
              +-----+  vtgate   |                   | Topology data |
              |     +-----------+-------------------+  (Zookeeper,  |
-             |     +-----------+-------------------+ etcd cluster) |
+             |     +-----------+-------------------+   cluster)    |
              +-----+  vtgate   |                   +------+--------+
              |     +-----------+                          |
              |                                            |
@@ -111,7 +114,7 @@ each Data Center as read-only copies.
 There is one local instance of that service per Cell (Data Center). The goal is
 to transparently support a Cell going down. When that happens, we assume the
 client traffic is drained out of that Cell, and the system can survive using the
-remaining Cells. 
+remaining Cells.
 
 ### Keyspace
   A keyspace is a logical database. In its simplest form, it directly maps to a
@@ -203,7 +206,7 @@ vttablet expect certain databases for its internal purpose:
 
 #### vttablet application
   This application sits in front of mysql database and handle all database
-traffic. 
+traffic.
 
 #### row cache instance
   vttablet using memcache for row caching. Vttablet application start memcache
@@ -215,12 +218,12 @@ The plan is to implement vitess in different phases, to reduce the impact. Here
 is the phases
 
 1. Setup single replicated set of vitess cluster without any sharding. Connect
-openstack to the vitess, and test. This need development effort to patch
+openstack to the vitess, and test. This requires development effort to patch
 sqlalchemy to add a dialect for vitess or to add a similar interface from
-openstack components. Only use mast node to read and write - usage of slave
+openstack components. Only use master node to read and write - usage of slave
 nodes are only in case of master failure.
   1a. only use master for read and write
-  1b. Start with zookeeper for topology datastore and later use etcd for that.
+  1b. Start with zookeeper for topology datastore.
   1c. It may make sense to add/write plugin for consul for topology datastore.
 2. Investigate on following items
   2a. Do we need to shard all tables? if not, What tables to be sharded across
@@ -237,11 +240,11 @@ nodes are only in case of master failure.
   between more nodes. Until this happen, we may try creating two vttablets
   on same servers and handlle in such a way that one node will have one master
   and one slave keyspace.
-  
+
 # Alternative Solutions (Pros/Cons)
 
 ## Mysql Sharding Solutions
-There are number of mysql sharding solutions 
+There are number of mysql sharding solutions
   * mysql fabric
   * spider storage engine
   * cubrid shard
@@ -268,15 +271,15 @@ CHANGES REQUIRED.
 
   NDB is disabled in mariadb - ndbcluster can be downloaded separately from
 mysql upstream.
-  
+
 Mysql cluster have three components:
 
-* Mysql database load balanced servers: 
+* Mysql database load balanced servers:
   Here mysql database servers are stateless and can be considered to be run
 behind load balancers.
 
   Mysql database servers connect to ndb data cluster through the network, so
-both database servers and data node clusters can be scaled independantly. 
+both database servers and data node clusters can be scaled independantly.
 
 * NDB data node clusters
   This is a replicated, sharded nosql data structure stored in a cluster of data
@@ -297,12 +300,12 @@ the management server and check the cluster status.
 
 ## Mysql cluster and vitess comparison
 
-           Mysql Cluster               |               Vitess                
+           Mysql Cluster               |               Vitess
  --------------------------------------|-------------------------------------
-  Synchronous replication              | Asynchronous Replication              
+  Synchronous replication              | Asynchronous Replication
   Replication and Sharding Transparant to the application, no driver changes | Application/driver changes required, as vitess doesnt support mysql driver
   In-memory database with data persistance in disks | Normal innodb storage engine
-  No changes required in the schema    | Each sharded table need extra column  
+  No changes required in the schema    | Each sharded table need extra column
   All tables are sharded, no need to choose shard key, even though choosing right key will improve the performance  | Good amount of planning required on sharding to choose appropriate shard keys.
   Support arbitrary queries and txns across shards. | Cross-shard transactions are not acid compliant, may be performance problem on cross-shard queries.
   R/W load balancing with all nodes.   | Since it is asynchronous, read from laves can give you stale data.
@@ -334,5 +337,5 @@ is going to be an ongoing activity as and when there is a schema change
 * Vitess is written in golang on which we dont have enough expertise.
 * vtgatev3 is compliant to python dbapiv2, which is currently undergoing active
   development, currently vtgate v2 is active which is not compliant to python
-  dbapi. 
+  dbapi.
 
