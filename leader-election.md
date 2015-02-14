@@ -5,23 +5,23 @@ specified by system layout. Also the leadership should be transferred to a
 different node if current leader has failed. The failure detection mechanism may
 be different in different situations depending on the requirements.
 
-There will be situations like the following which need a leader.                
-                                                        
-## Seed Node                                             
+There will be situations like the following which need a leader.
+
+## Seed Node
   Here the node is the first node just for initializing the role, cluster or the
 entire system and once the system is get initialized, the node does not have any special
 meaning.
 
   Since the leader/seed node only relevant for initialization, there is no
 failure detection mechanism and transfer of leadership required in this case.
-                                                        
-## Cluster deployment                                                            
-  In this case, one node (the leader) should initialize the cluster and others  
+
+## Cluster deployment
+  In this case, one node (the leader) should initialize the cluster and others
 should wait till certain point where they can join the leader to form a cluster.
 
-## Restrict certain actions to be performed by single node in a role             
-  In this case, there may be certain actions to be performed by only a single   
-node within a role. 
+## Restrict certain actions to be performed by single node in a role
+  In this case, there may be certain actions to be performed by only a single
+node within a role.
 
 # Problem Statement
 
@@ -44,7 +44,7 @@ reinitializing the system and thus corrupting the existing system/data.
 
 # Proposed Solution
 
-It is possible to develop a leader election system around consul. 
+It is possible to develop a leader election system around consul.
 
 ## Consul session based leader election
 
@@ -57,7 +57,7 @@ be shared among all nodes within the group/role.
   The nodes who come up will try to acquire the lock by using acquire method while
 creating a consul kv. This will return true or false, if true returned the lock
 has been acquired by the local node and now he is the *leader*. If false is
-returned, the lock has been acquired by some other node. 
+returned, the lock has been acquired by some other node.
 
   Now the leader perform the actions what it need to do including initializing the
 system/cluster and rest of the nodes may wait until the system is ready to
@@ -67,13 +67,16 @@ join the system or perform the actions itself.
 other logic in the system or automatically if leader healthcheck fails. In that
 case other nodes may acquire the session and be act as leader. The level of
 healthcheck and even the requirement of healthcheck is configurable, which will
-be depends on the way the system use leader.
+be depends on the way the system use leader. It also accepts a timeout
+(lock-delay) value upto 60 seconds. When a session invalidation takes place,
+Consul prevents any of the previously held locks from being re-acquired for the
+lock-delay interval which provide a safe guard on false positives.
 
   For example, in a case of mysql master/slave node, the healthcheck may need to be
 good enough to decide if the mysql master is working or not and if failed, it
 should release the lock which facilitates mysql slave to become master. Where in
 case of seed node, no healthcheck is required at all as seed node doesnt have
-any special meaning after first initialization. 
+any special meaning after first initialization.
 
 NOTE: There are possibilities for false positives, which we may have to handle
 either using lock-delay while creating session or a set of checks to validate
@@ -81,37 +84,37 @@ before transfer of leadership (or any other actions) or a combination of both.
 
 ### Implementation
 
-  The sessions are need to be defined within hiera which will be created only by
-*one and only one node*. This is very important because consul allow you to
-create multiple sessions with same name - only session id matters. This should
-be implemented as a puppet native type and may be executed on bootstrap node.
-Each session should be named in a format which will uniquely identify the
-session - I propse naming format like this - ```<meta service/application>-<service>-leader```, 
-e.g "contrail-zookeeper-leader" session is for zookeeper leader for contrail where 
-"vitess-zookeeper-leader" session is for zookeeper leader for vitess cluster.
+  Each node participating the cluster will create a consul session by its
+hostname. There should be a custom facter implementation per cluster service
+which does the following.
+* Create a consul session by the hostname of the node who participate the
+cluster.
+* Acquire the lock by using acquire=```<session id>``` parameter creating a
+defined consul kv with value equal to its hostname. I propose to use the kv name
+```services/<meta service>/<service>/leader```.
+* Set facts
+  ```
+    <meta service>_<service>_leader with value of leader hostname
+    orc_node_status with value 'leader' or 'follower' based on the status
+  ```
+  The fact orc_node_status can be used to build hiera hierarchy for leader and
+followers.
+* The facter should have a conditional to check the role from jiocloud_role
+facter, so that it only run the facter code if the role need to join the
+provided cluster/system.
 
-  There should be a custom facter implementation per session which is
-responsible to acquire the session and should return the nodename (or IP?) who
-is the leader. Facter acquire the session by using acquire=```<session id>```
-parameter creating a defined consul kv - I propose to use the kv ```services/<meta
-service>/<service>/leader```. The facter should have a conditional to check the
-role from jiocloud_role facter and only run if the role matches the session. It
-may also make sense to implement this logic in a function rather than a facter.
-
-There should be one more facter to be set (from same facter code as above) with
-name orc_node_status (orc for orchestration) and value eather leader or
-follower. This facter can be used to set hierarchy for leader in hiera.
+It may also make sense to implement this logic in a function rather than a facter.
 
   Puppet code should use the facter/function to determine who is leader and
 perform the actions accordingly. Also Puppet code may or may not perform
-leadership transfer actions if current leader released the session. 
+leadership transfer actions if current leader released the session.
 
 NOTE: There are pros and cons on using facter and function for this purpose. The
 advantage of facter is that it is available for entire resources where function
 need to be called within the resources where it is required. Also facter can be
 used in hiera to build hierarchy for leader. But the problem with facter is that
 the session name should be pre-defined it cannot be configurable using hiera as
-facter run happens before hiera. 
+facter run happens before hiera.
 
 #### Example
 
@@ -132,10 +135,10 @@ facter to acquire session.
   "leader". If it failed to acquire session, it just read the
   value of the above key and return the value which contain the leader node name
   and the facter orc_node_status="follower"
-* Define a hierarchy in hiera based on the facter orc_node_status. 
+* Define a hierarchy in hiera based on the facter orc_node_status.
 * Implemented rest of the puppet code around the facters to perform appropriate
   actions on leader as well as followers and to perform any leadership transfer
-  in case of current leader released the session. 
+  in case of current leader released the session.
 
 
 # Alternate Solutions and Pros/Cons
@@ -152,7 +155,7 @@ got to create the key will be the leader and the rest will be followers.
 
   The problem with this method is that the leadership transfer is going to have
 a logic defined by external code as there is no healthcheck or anything there in
-consul to automatically release the leadership. 
+consul to automatically release the leadership.
 
   This mechanism may work well to build logic on rolling operations like rolling
 upgrades where we can keep the index value to be "n" where n number of nodes in
